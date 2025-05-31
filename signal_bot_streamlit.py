@@ -1,23 +1,21 @@
 import streamlit as st
 import requests
-import talib
 import numpy as np
 import telegram
 import os
+import pandas as pd
+import ta
 
-# إعداد تيليجرام من متغيرات البيئة (أفضل للأمان)
-TELEGRAM_TOKEN = os.getenv("8112822168:AAFlMU3El0ysMPssjztTZybp_f7wlRrWk2I")
-TELEGRAM_CHAT_ID = os.getenv("6083602720")
+TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
+TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
 bot = telegram.Bot(token=TELEGRAM_TOKEN)
 
-# قائمة الأصول الجاهزة
 ASSETS = {
     "EUR/USD": "EURUSD=X",
     "USD/JPY": "USDJPY=X",
     "GBP/USD": "GBPUSD=X",
     "GOLD": "XAUUSD=X",
     "S&P 500": "^GSPC",
-    # أضف أصول أخرى هنا
 }
 
 def fetch_prices(symbol, interval="1m", limit=120):
@@ -28,36 +26,45 @@ def fetch_prices(symbol, interval="1m", limit=120):
     return closes[-limit:]
 
 def get_signals(prices):
-    p = np.array(prices)
+    df = pd.DataFrame(prices, columns=['close'])
     signals = []
 
-    # بعض المؤشرات القوية
-    rsi = talib.RSI(p, timeperiod=14)
-    macd, macdsignal, _ = talib.MACD(p, fastperiod=12, slowperiod=26, signalperiod=9)
-    sma = talib.SMA(p, timeperiod=20)
-    ema = talib.EMA(p, timeperiod=20)
-    upper, middle, lower = talib.BBANDS(p, timeperiod=20)
-    slowk, slowd = talib.STOCH(p, p, p, fastk_period=14, slowk_period=3, slowd_period=3)
+    # RSI
+    df["rsi"] = ta.momentum.RSIIndicator(df['close'], window=14).rsi()
+    if df["rsi"].iloc[-1] < 30:
+        signals.append("buy")
+    elif df["rsi"].iloc[-1] > 70:
+        signals.append("sell")
+    else:
+        signals.append("neutral")
 
-    if rsi[-1] < 30: signals.append("buy")
-    elif rsi[-1] > 70: signals.append("sell")
-    else: signals.append("neutral")
+    # MACD
+    macd = ta.trend.MACD(df['close'])
+    if macd.macd_diff().iloc[-1] > 0:
+        signals.append("buy")
+    elif macd.macd_diff().iloc[-1] < 0:
+        signals.append("sell")
+    else:
+        signals.append("neutral")
 
-    if macd[-1] > macdsignal[-1]: signals.append("buy")
-    elif macd[-1] < macdsignal[-1]: signals.append("sell")
-    else: signals.append("neutral")
+    # SMA & EMA
+    df["sma20"] = ta.trend.SMAIndicator(df["close"], 20).sma_indicator()
+    df["ema20"] = ta.trend.EMAIndicator(df["close"], 20).ema_indicator()
+    if df['close'].iloc[-1] > df["sma20"].iloc[-1] and df['close'].iloc[-1] > df["ema20"].iloc[-1]:
+        signals.append("buy")
+    elif df['close'].iloc[-1] < df["sma20"].iloc[-1] and df['close'].iloc[-1] < df["ema20"].iloc[-1]:
+        signals.append("sell")
+    else:
+        signals.append("neutral")
 
-    if p[-1] > sma[-1] and p[-1] > ema[-1]: signals.append("buy")
-    elif p[-1] < sma[-1] and p[-1] < ema[-1]: signals.append("sell")
-    else: signals.append("neutral")
-
-    if p[-1] < lower[-1]: signals.append("buy")
-    elif p[-1] > upper[-1]: signals.append("sell")
-    else: signals.append("neutral")
-
-    if slowk[-1] < 20 and slowd[-1] < 20: signals.append("buy")
-    elif slowk[-1] > 80 and slowd[-1] > 80: signals.append("sell")
-    else: signals.append("neutral")
+    # Bollinger Bands
+    bb = ta.volatility.BollingerBands(df["close"], window=20)
+    if df["close"].iloc[-1] < bb.bollinger_lband().iloc[-1]:
+        signals.append("buy")
+    elif df["close"].iloc[-1] > bb.bollinger_hband().iloc[-1]:
+        signals.append("sell")
+    else:
+        signals.append("neutral")
 
     return signals
 
